@@ -1,0 +1,3 @@
+ extern void dgemm_nn_(int m, int n,  int k,  double *a, int lda,
+                       double alpha, double *b, int ldb, double beta,
+                       double *c, int ldc); 

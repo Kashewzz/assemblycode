@@ -1,0 +1,202 @@
+// #define REALNAME dgemm_nn_
+// .macro PROLOGUE 
+// 	.text ;
+// 	.p2align 2 ;
+// 	.global	REALNAME ;
+// 	.type	REALNAME, %function ;
+// REALNAME:
+// .endm
+/*
+void dgemm_(const int *m, const int *n, const int *k, 
+            const double *alpha, const double *a, const int *lda,
+            const double *b, const int *ldb, const double *beta, double *c,
+            const int *ldc);
+*/
+/*
+
+dgemm_nn(&m, &n, &k,
+  &alpha, ai, &m, bi, &k, &beta, tmp, &m);
+*/
+// #include "f77blas.h"
+#define origM		x0
+#define origN		x1
+#define origK		x2
+#define origPA		x3
+#define LDA         x4
+#define origPB		x5
+#define LDB         x6
+#define pC		    x7
+#define LDC		    x8
+#define counterL	x9
+#define counterI	x10
+#define counterJ	x11
+
+#define pA          x12
+#define pA0         x13
+#define pA1         x14
+
+#define pB0         x15
+#define pB1         x16
+#define pB2         x17
+#define pB3         x18
+
+#define pC0         x20
+#define pC1         x21
+#define pC2         x22
+#define pC3         x23
+
+// #define alpha       x23
+// #define beta        x24
+
+// #define alpha0      d0
+// #define beta0       d1
+
+// #define alphaV0     v0.d[0]
+// #define betaV0      v1.d[1]
+
+// .macro SAVE_REGS
+// sub sp, sp, #90
+// stp d8, d9, [sp]
+// stp d10, d11, [sp, #16]
+// stp d12, d13, [sp, #32]
+// stp d14, d15, [sp, #48]
+// stp x19, x20, [sp, #64]
+// stp x21, x22, [sp, #80]
+// stp x23, x24, [sp, #96]
+// stp x25, x26, [sp, #112]
+// stp x27, x28, [sp, #128]
+// .endm
+
+// .macro RESTORE_REGS
+// sub sp, sp, #90
+// ldp d8, d9, [sp]
+// ldp d10, d11, [sp, #16]
+// ldp d12, d13, [sp, #32]
+// ldp d14, d15, [sp, #48]
+// ldp x19, x20, [sp, #64]
+// ldp x21, x22, [sp, #80]
+// ldp x23, x24, [sp, #96]
+// ldp x25, x26, [sp, #112]
+// ldp x27, x28, [sp, #128]
+// .endm
+.macro SAVE_REGS
+	add	sp, sp, #-(11 * 16)
+	stp	d8, d9, [sp, #(0 * 16)]
+	stp	d10, d11, [sp, #(1 * 16)]
+	stp	d12, d13, [sp, #(2 * 16)]
+	stp	d14, d15, [sp, #(3 * 16)]
+	stp	d16, d17, [sp, #(4 * 16)]
+	stp	x18, x19, [sp, #(5 * 16)]
+	stp	x20, x21, [sp, #(6 * 16)]
+	stp	x22, x23, [sp, #(7 * 16)]
+	stp	x24, x25, [sp, #(8 * 16)]
+	stp	x26, x27, [sp, #(9 * 16)]
+	str	x28, [sp, #(10 * 16)]
+.endm
+
+.macro RESTORE_REGS
+	ldp	d8, d9, [sp, #(0 * 16)]
+	ldp	d10, d11, [sp, #(1 * 16)]
+	ldp	d12, d13, [sp, #(2 * 16)]
+	ldp	d14, d15, [sp, #(3 * 16)]
+	ldp	d16, d17, [sp, #(4 * 16)]
+	ldp	x18, x19, [sp, #(5 * 16)]
+	ldp	x20, x21, [sp, #(6 * 16)]
+	ldp	x22, x23, [sp, #(7 * 16)]
+	ldp	x24, x25, [sp, #(8 * 16)]
+	ldp	x26, x27, [sp, #(9 * 16)]
+	ldr	x28, [sp, #(10 * 16)]
+	add	sp, sp, #(11*16)
+.endm
+
+.macro K4x4_LoadC
+ldp q24, q25, [pC0]
+ldp q26, q27, [pC1]
+ldp q28, q29, [pC2]
+ldp q30, q31, [pC3]
+.endm
+
+.macro K4x4_M1
+ldp q2, q3, [pA0]
+add pA0, pA0, LDA
+ldr d10, [pB0], #8
+ldr d11, [pB1], #8
+ldr d12, [pB2], #8
+ldr d13, [pB3], #8
+fmla v24.2d, v2.2d, v10.d[0]
+fmla v25.2d, v3.2d, v10.d[0]
+fmla v26.2d, v2.2d, v11.d[0]
+fmla v27.2d, v3.2d, v11.d[0]
+fmla v28.2d, v2.2d, v12.d[0]
+fmla v29.2d, v3.2d, v12.d[0]
+fmla v30.2d, v2.2d, v13.d[0]
+fmla v31.2d, v3.2d, v13.d[0]
+
+.endm
+
+.macro K4x4_SAVEC
+stp q24, q25, [pC0], #32
+stp q26, q27, [pC1], #32
+stp q28, q29, [pC2], #32
+stp q30, q31, [pC3], #32
+.endm
+
+// function begin
+// PROLOGUE
+.global	dgemm_nn_
+.type dgemm_nn_, @function
+.section .text
+dgemm_nn_:
+
+SAVE_REGS
+ldr LDC, [sp, #176]
+// fmov alpha, d0
+// fmov beta,  d1
+
+lsl  LDA,  LDA,  #3
+lsl  LDB,  LDB,  #3
+lsl  LDC,  LDC,  #3
+mov  counterJ, origN
+
+
+.Ldgemm_k_L4_BEGIN:
+mov  pC0, pC
+add  pC1, pC0, LDC
+add  pC2, pC1, LDC
+add  pC3, pC2, LDC
+add  pC, pC3, LDC
+mov  pA, origPA
+
+
+.Ldgemm_k_M4_BEGIN:
+mov  counterI, origM
+.Ldgemm_k_L4_M4_20:
+K4x4_LoadC
+mov  counterL, origK
+mov  pB0, origPB
+add  pB1, pB0, LDB
+add  pB2, pB1, LDB
+add  pB3, pB2, LDB
+// add  pA1, pA, LDA
+mov  pA0, pA
+// add  pA1, pA0, LDA
+
+.Ldgemm_k_L4_M4_30:
+K4x4_M1
+subs counterL, counterL, #1
+b.gt .Ldgemm_k_L4_M4_30
+
+.Ldgemm_k_L4_M4_END:
+K4x4_SAVEC
+add pA, pA, #32
+subs counterI, counterI, #4
+b.gt   .Ldgemm_k_L4_M4_20
+
+.Ldgemm_k_L4_END:
+add  origPB, origPB, LDB, LSL #2
+subs  counterJ, counterJ, #4
+b.gt .Ldgemm_k_L4_BEGIN
+
+.Ldgemm_k_L999:
+RESTORE_REGS
+ret
